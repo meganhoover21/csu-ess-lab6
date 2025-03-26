@@ -1,0 +1,15 @@
+---
+title: "lab6"
+format: html
+---
+
+#Load libraries for this lab
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(powerjoin)
+library(glue)
+library(vip)
+library(baguette)
+```
+
