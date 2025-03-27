@@ -15,6 +15,7 @@ library(baguette)
 library(ggthemes)
 library(patchwork)
 library(ranger)
+library(xgboost)
 ```
 # Download data
 ```{r}
@@ -122,8 +123,8 @@ aridity_plot | p_meanplot
 ```
 
 
-# Model Preparation
-## As an initial analysis, lets look at the relationship between aridity, rainfall and mean flow. First, lets make sure there is not significant correlation between these variables. Here, we make sure to drop NAs and only view the 3 columns of interest.
+## Model Preparation
+# As an initial analysis, lets look at the relationship between aridity, rainfall and mean flow. First, lets make sure there is not significant correlation between these variables. Here, we make sure to drop NAs and only view the 3 columns of interest.
 ```{r}
 #given code to run
 camels |> 
@@ -440,3 +441,42 @@ autoplot(wf)
 rank_results(wf, rank_metric = "rsq", select_best = TRUE)
 ```
 Overall it seems the random forest model is outperforming the linear model. This is not surprising given the non-linear relationship between the predictors and the outcome :)
+
+
+
+## Question 3: Your Turn!
+# 1. Build a xgboost (engine) regression (mode) model using boost_tree.
+  2. Build a neural network model using the nnet engine from the baguette package using the bag_mlp function.
+  3. Add this to the above workflow.
+  4. Evaluate the model and compare it to the linear and random forest models.
+  5. Which of the 4 models would you move forward with?
+  
+  1.
+```{r}
+#define model
+boost_model <- boost_tree() %>%
+  # define the engine
+  set_engine("xgboost") %>%
+  # define the mode
+  set_mode("regression")
+```
+  
+ 2.
+```{r}
+#define model
+bag_model <- bag_mlp() %>%
+  # define the engine
+  set_engine("nnet") %>%
+  # define the mode
+  set_mode("regression")
+```
+ 
+ 3.
+```{r}
+wf_bag_boost <- workflow_set(list(rec), list(bag_model, boost_model)) %>%
+  workflow_map('fit_resamples', resamples = camels_cv) 
+
+autoplot(wf_bag_boost)
+```
+ 
+  
