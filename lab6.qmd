@@ -479,4 +479,15 @@ wf_bag_boost <- workflow_set(list(rec), list(bag_model, boost_model)) %>%
 autoplot(wf_bag_boost)
 ```
  
+  4. 
+```{r}
+rank_results(wf_bag_boost, rank_metric = "rsq", select_best = TRUE)
+#higher mean means higher accuracy among the resamples data
+#lower std is lower variation =good
+```
+  
+  The bag model seems to overall do better than the boost_tree models.
+  
+  5.
+Out of all 4 models, the random forest ones are the best for this data and I would move forward using that option.
   
