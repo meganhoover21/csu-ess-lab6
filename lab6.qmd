@@ -200,6 +200,7 @@ ggplot(camels, aes(x = aridity, y = p_mean)) +
 
 
 ## Model Building
+
 # Let's split the data: 
 First, we set a seed for reproducabilty, then transform the q_mean column to a log scale. Remember it is error prone to apply transformations to the outcome variable within a recipe. So, we’ll do it a prioi.
 
@@ -486,8 +487,32 @@ rank_results(wf_bag_boost, rank_metric = "rsq", select_best = TRUE)
 #lower std is lower variation =good
 ```
   
-  The bag model seems to overall do better than the boost_tree models.
+The bag model seems to overall do better than the boost_tree models. It has a higher mean accuracy and a slightly lower standard deviation of error.
   
-  5.
+5.
 Out of all 4 models, the random forest ones are the best for this data and I would move forward using that option.
+
+
+
+## Build Your Own
+Borrowing from the workflow presented above, build your own complete ML pipeline to predict mean stream flow using the CAMELS dataset. You can experiment with different predictors and preprocessing steps to see how they impact model performance. A successful model will have a R-squared value > 0.9. To get started, you can use the following steps as a template:
+
+Q4a) Data prep/split
+```{r}
+#set a seed for reproducibility 
+set.seed(321)
+
+#Create an initial split with 75% used for training and 25% for testing
+#note- we did a log transformation on camels recipe in above example for model building
+camels_split2 <- initial_split(camels, prop = 0.75)
+camels_train2 <- training(camels_split2)
+camels_test2  <- testing(camels_split2)
+
+#10-fold cross validation dataset to help us evaluate multi-model setups.
+camels_cv2 <- vfold_cv(camels_train2, v = 10)
+```
+
+
+Q4b) Recipe
+
   
