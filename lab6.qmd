@@ -515,4 +515,108 @@ camels_cv2 <- vfold_cv(camels_train2, v = 10)
 
 Q4b) Recipe
 
+I'm using a multiple regression model to show the prediction of the logQmean by aridity, pet_mean because these variables are continuous.
+```{r}
+#Define a formula you want to use to predict logQmean & recipe
+rec2 <-  recipe(logQmean ~ aridity + pet_mean, data = camels_train2) %>%
+  # Log transform the predictor variables (aridity and pet_mean)
+  step_log(all_predictors()) %>%
+  # Add an interaction term between aridity and pet_mean
+  step_interact(terms = ~ aridity:pet_mean) |> 
+  # Drop any rows with missing values in the pred
+  step_naomit(all_predictors(), all_outcomes())
+```
+
   
+  Q4c): Define 3 models 
+```{r}
+# Prep,bake predict
+#This ensures the test data is transformed in the same way as the training data before making predictions
+baked_data2 <- prep(rec2, camels_train2) |> 
+  bake(new_data = NULL)
+
+#Define a random forest model using the rand_forest function, set engine to ranger and mode to regression
+rf_model2 <- rand_forest() %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("regression")
+
+#Define two other models of choice 
+#linear model
+lm_model2 <- linear_reg() %>%
+  # define the engine
+  set_engine("lm") %>%
+  # define the mode
+  set_mode("regression")
+
+#boost model
+boost_model2 <- boost_tree() %>%
+  # define the engine
+  set_engine("xgboost") %>%
+  # define the mode
+  set_mode("regression")
+
+
+
+#rf_wf <- workflow() %>%
+  # Add the recipe
+  #add_recipe(rec) %>%
+  # Add the model
+ # add_model(rf_model) %>%
+  # Fit the model
+  #fit(data = camels_train) 
+#Set the engine to ranger and the mode to regression
+# Define two other models of your choice
+```
+  
+  
+Q4d) workflow set 
+```{r}
+#Create a workflow object, add recipe, add the model, to model to resamples
+wf2 <- workflow_set(list(rec2), list(lm_model2, boost_model2,rf_model2)) %>%
+  workflow_map('fit_resamples', resamples = camels_cv)
+```
+
+
+Q4e) Evaluation
+```{r}
+# Use autoplot and rank_results to compare the models.
+autoplot(wf2)
+
+rank_results(wf2, rank_metric = "rsq", select_best = TRUE)
+```
+The linear regression model is best out of the three models that were run. This is because the PET_mean and aridity showed more of a linear realationship with the outcome variable of the log Qmean.
+
+
+Q5f) Extract and Evaluate
+```{r}
+#Build a workflow (not workflow set) with your favorite model, recipe, and training data.Use fit to fit all training data to the model
+
+lm_wf2 <- workflow() %>%
+  # Add the recipe
+  add_recipe(rec2) %>%
+  # Add the model
+  add_model(lm_model2) %>%
+  # Fit the model to the training data
+  fit(data = camels_train2) 
+
+#Use augment to make predictions on the test data
+lm_data2 <- augment(lm_wf2, new_data = camels_test2)
+dim(lm_data2)
+
+#Create a plot of the observed vs predicted values with clear title, axis labels, and a compelling color scale
+ggplot(lm_data2, aes(x = logQmean, y = .pred, colour = pet_mean)) +
+  scale_color_viridis_c() +
+  geom_point() +
+  geom_abline() +
+  theme_linedraw() +
+  labs(title = "Linear Model: Observed vs Predicted",
+       x = "Observed Log Mean Flow",
+       y = "Predicted Log Mean Flow",
+       color = "PET Mean")
+
+#metrics
+metrics(lm_data2, truth = logQmean, estimate = .pred)
+```
+
+# Describe what you think of the results
+The linear model has a 79% accuracy in estimating the predicted logQmean by the predictor variables. This model shows the linear relationship between the pet_mean predictor variable and the logQmean. The relationship makes sense in the plot and in the metric results. It was also the highest of the other three models tested, so the results make sense.
