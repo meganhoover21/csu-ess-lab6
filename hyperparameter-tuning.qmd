@@ -83,3 +83,80 @@ camels_cv <- vfold_cv(camels_train, v = 10)
 
 
 # Feature Engineering
+```{r}
+#create recipe object with recipe(). Based on how you want to predict q_mean and the data should be the training data.
+
+rec <-  recipe(logQmean ~ aridity + pet_mean, data = camels_train) %>%
+  # Log transform the predictor variables (aridity and p_mean)
+  
+  step_log(all_predictors()) %>%
+  
+  # Add an interaction term between aridity and p_mean
+  step_interact(terms = ~ aridity:pet_mean) |> 
+  
+  # Drop any rows with missing values in the pred
+  step_naomit(all_predictors(), all_outcomes()) %>%
+  
+  #Don't use gauge_lat and gauge_lon in the recipe as predictors. You can use the step_rm() function to remove themwhile ensureing they persist in any data passed throuhg fit_*.
+  
+  update_role(gauge_lat, gauge_lon, new_role = "id")
+
+#problem with step_rm: exclude these columns from being used as predictors, but still keep them in the dataset for later (e.g., to join, identify sites, or plot
+```
+
+
+# Resampling and Modeling Data: Training data is now ready to be used for model training and you have a preprocessor that you can iterate over.
+
+Build Resamples: This step is done above int he data splitting portion
+
+
+# Build 3 Candidate Models: A model is defined by a specification, an engine, and a mode. 
+```{r}
+#Define a random forest model using the rand_forest function, set engine to ranger and mode to regression
+rf_model2 <- rand_forest() %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("regression")
+
+#Define two other models of choice 
+#linear model
+lm_model2 <- linear_reg() %>%
+  # define the engine
+  set_engine("lm") %>%
+  # define the mode
+  set_mode("regression")
+
+#boost model
+boost_model2 <- boost_tree() %>%
+  # define the engine
+  set_engine("xgboost") %>%
+  # define the mode
+  set_mode("regression")
+
+```
+
+
+#Test the Models
+
+linear regression, xgboost, and random forest models:
+```{r}
+#Create a workflow object, add recipe, add the model, to model to resamples
+wf2 <- workflow_set(list(rec), list(lm_model2, boost_model2,rf_model2)) %>%
+  workflow_map('fit_resamples', resamples = camels_cv)
+
+# Use autoplot and rank_results to compare the models.
+autoplot(wf2)
+
+rank_results(wf2, rank_metric = "rsq", select_best = TRUE)
+```
+
+# Model Selection
+
+Based on the visualized metrics, select a model that you think best performs. Describe the reason for your choice using the metrics.
+```{r}
+rank_results(wf2, rank_metric = "rsq", select_best = TRUE)
+```
+The linear regression model is best out of the three models that were run. This is because the PET_mean and aridity showed more of a linear realationship with the outcome variable of the log Qmean.
+
+
+# Model Tuning
+
