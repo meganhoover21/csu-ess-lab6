@@ -1,0 +1,85 @@
+---
+title: "hyperparameter-tuning"
+format: html
+---
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(glue)
+library(powerjoin)
+library(vip)
+library(baguette)
+library(ggthemes)
+library(patchwork)
+library(ranger)
+library(xgboost)
+library(visdat)
+```
+# Read in the data using map, read_delim() and powerjoin::power_full_join()
+```{r}
+# download data
+root  <- 'https://gdex.ucar.edu/dataset/camels/file'
+
+#download the documentation PDF which provides a descriptions for the various columns 
+download.file('https://gdex.ucar.edu/dataset/camels/file/camels_attributes_v2.0.pdf', 
+              'data/camels_attributes_v2.0.pdf')
+
+# download the .txt files that store the actual data documented in the PDF. Create a vector storing the data types/file names we want to download:
+
+#data from the pdf that we want
+types <- c("clim", "geol", "soil", "topo", "vege", "hydro")
+
+# Using glue, we can construct the needed URLs and file names for the data we want to download:
+
+# Where the files live online ...
+remote_files  <- glue('{root}/camels_{types}.txt')
+# where we want to download the data ...
+local_files   <- glue('data/camels_{types}.txt')
+
+# asking walk2 to pass the first element of remote_files and the first element of local_files to the download.file function to download the data, and setting quiet = TRUE to suppress output. The process is then iterated for the second element of each vector, and so on.
+walk2(remote_files, local_files, download.file, quiet = TRUE)
+
+# Read and merge data
+camels <- map(local_files, read_delim, show_col_types = FALSE) 
+
+#we are join to merge every data.frame in the list (n = 6) by the shared gauge_id column. Since we want to keep all data, we want a full join.
+camels <- power_full_join(camels ,by = 'gauge_id')
+```
+
+
+# Clean the data using dplyr, EDA (skimr, visdat, ggpubr), and other means to ensure it is in a good form for modeling.
+
+```{r}
+#look at data structure and where na values are
+vis_dat(camels)
+
+# EDA visualizion
+ggplot(data = camels, aes(x = gauge_lon, y = gauge_lat)) +
+  borders("state", colour = "gray50") +
+  geom_point(aes(color = q_mean)) +
+  scale_color_gradient(low = "pink", high = "dodgerblue") +
+  ggthemes::theme_map()
+```
+
+
+# Data Splitting
+```{r}
+#set seed
+set.seed(123)
+
+#transform the q_mean column to a log scale. Remember it is error prone to apply transformations to the outcome variable within a recipe
+camels <- camels |> 
+  mutate(logQmean = log(q_mean))
+
+# split data: use 80% of the data for training and 20% for testing with no stratification
+camels_split <- initial_split(camels, prop = 0.8)
+camels_train <- training(camels_split)
+camels_test  <- testing(camels_split)
+
+#create a 10-fold cross validation dataset to help us evaluate multi-model setups.
+camels_cv <- vfold_cv(camels_train, v = 10)
+```
+
+
+# Feature Engineering
