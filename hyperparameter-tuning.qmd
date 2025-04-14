@@ -155,8 +155,16 @@ Based on the visualized metrics, select a model that you think best performs. De
 ```{r}
 rank_results(wf2, rank_metric = "rsq", select_best = TRUE)
 ```
-The linear regression model is best out of the three models that were run. This is because the PET_mean and aridity showed more of a linear realationship with the outcome variable of the log Qmean.
+The linear regression model is best out of the three models that were run. This is because the PET_mean and aridity showed more of a linear relationship with the outcome variable of the log Qmean. It has a higher mean accuracy and a slightly lower standard deviation of error than the other models.
+
+The engine for the linear regression model is linear, while the mode is regression. This type of model is good for this data set because it's small and easy to train and predict without the risk of over fitting. It also is a more linear relationship, that's better explained by this model than the other two.
 
 
 # Model Tuning
+
+Define a tunable model: Be sure to set the mode and engine as you did above but this time specify at least 2 hyperparameters to tune using the tune() function. These are set in the model specification and options can be found in the documentation for the model you are using.
+```{r}
+
+```
+
 
