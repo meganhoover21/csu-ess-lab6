@@ -15,6 +15,7 @@ library(patchwork)
 library(ranger)
 library(xgboost)
 library(visdat)
+library(dials)
 ```
 # Read in the data using map, read_delim() and powerjoin::power_full_join()
 ```{r}
@@ -164,7 +165,80 @@ The engine for the linear regression model is linear, while the mode is regressi
 
 Define a tunable model: Be sure to set the mode and engine as you did above but this time specify at least 2 hyperparameters to tune using the tune() function. These are set in the model specification and options can be found in the documentation for the model you are using.
 ```{r}
+#check tunable paramters for line reg
+?linear_reg
 
+#choosing glmnet:uses regularized least squares to fit models with numeric outcomes.
+# For this engine, there is a single mode: regression
+
+#This model has 2 tuning parameters:
+#penalty: Amount of Regularization (type: double, default: see below)
+#mixture: Proportion of Lasso Penalty (type: double, default: 1.0)
+
+#A value of mixture = 1 corresponds to a pure lasso model, while mixture = 0 indicates ridge regression.
+
+#The penalty parameter has no default and requires a single numeric value.
+
+lm_tunable <- linear_reg(penalty = tune(), mixture = tune()) %>%
+  set_engine("glmnet") %>%
+  set_mode("regression")
+
+```
+
+
+ # Create a workflow
+ 
+Now create a workflow object for this tune-able model and the recipe you created above.
+```{r}
+# Create the workflow by combining the recipe and model
+lm_tuned_wf <- workflow(rec,lm_tunable)
+  
+```
+
+
+# Check The Tunable Values / Ranges
+
+In the above step, you created a workflow based on a model that has at least 2 tunable hyper parameters. Remember tune() is aware of the tunable parameters in the model specification and provides some basic defaults to tune across. We want to see what the range of those are! To do this, we can use the extract_parameter_set_dials() to return a list of the tunable parameters and their ranges. The output of this function is a data.frame.
+
+Use the extract_parameter_set_dials(YOUR MODEL WORKFLOW) and save it to an object named dials. Check the dials$object slot to see the tunable parameters and their ranges.
+```{r}
+# Extract tunable parameters from the workflow
+dials <- extract_parameter_set_dials(lm_tuned_wf)
+
+# View the parameter ranges
+dials$object
+
+#penalty: Regularization strength (lambda in glmnet); default range is on a log scale from 1e-10 to 1. A higher penalty forces coefficients toward zero (more shrinkage), which can help prevent overfitting. -10 → corresponds to a very small penalty (10^-10 = 1e-10), 0 → corresponds to a penalty of 1 (10^0 = 1).
+
+#mixture: Elastic net mixing value (0 = ridge, 1 = lasso); linear scale from 0 to 1.
+
+#Tuning penalty helps you control overfitting. Tuning mixture helps you balance between:
+
+#Ridge: good when many small effects. Lasso: good when some variables are irrelevant (feature selection)
+
+```
+
+# Define the Search Space
+
+
+OK, we now know the viable range of the hyperparameters we want to tune. The full range of these values is the complete search space in which the best options could live. Remember, there are two ways for our computer to search for the best combination:
+
+1. Grid Search: This is a brute force approach that tests a predefined set of combinations. If elected as the search process, we need to specify how the set of combinations is chosen. This can be versions of evenly spaced (regular), random, or space filling curve/design (SFC/SFD).
+
+2. Iterative: This is a more efficient approach that uses a set of algorithms to search the space. This is often more efficient than grid search, but can be less thorough.
+
+For this lab, lets use a grid search based on a “Latin Hypercube” SFD method. We can specify this by passing our above dials object to the grid_latin_hypercube() function. The only thing we need to specify is the size of the grid we want to evaluate. The larger the size, the more thorough the search, but the longer your computer will take. Lets set the size to 20 for this lab and save the outputs to an object called my.grid
+
+Create a SFD Grid Object with 25 predefined combinations.
+```{r}
+# Create a Latin Hypercube grid with 25 combinations
+my.grid <- lm_tuned_wf %>%
+  extract_parameter_set_dials %>%
+  grid_latin_hypercube(size=25)
+
+#size = 25 tells it to generate 25 unique combinations of penalty and mixture.
+
+#grid_latin_hypercube() samples evenly across the search space, but in a way that covers more ground than a regular grid with fewer points.
 ```
 
 
