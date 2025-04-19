@@ -16,6 +16,7 @@ library(ranger)
 library(xgboost)
 library(visdat)
 library(dials)
+library(tune)
 ```
 # Read in the data using map, read_delim() and powerjoin::power_full_join()
 ```{r}
@@ -70,11 +71,13 @@ ggplot(data = camels, aes(x = gauge_lon, y = gauge_lat)) +
 set.seed(123)
 
 #transform the q_mean column to a log scale. Remember it is error prone to apply transformations to the outcome variable within a recipe
-camels <- camels |> 
-  mutate(logQmean = log(q_mean))
+camels_clean <- camels |> 
+  mutate(logQmean = log(q_mean)) %>%
+  select(logQmean,aridity,pet_mean, gauge_lat, gauge_lon) %>%
+  drop_na()
 
 # split data: use 80% of the data for training and 20% for testing with no stratification
-camels_split <- initial_split(camels, prop = 0.8)
+camels_split <- initial_split(camels_clean, prop = 0.8)
 camels_train <- training(camels_split)
 camels_test  <- testing(camels_split)
 
@@ -87,20 +90,17 @@ camels_cv <- vfold_cv(camels_train, v = 10)
 ```{r}
 #create recipe object with recipe(). Based on how you want to predict q_mean and the data should be the training data.
 
-rec <-  recipe(logQmean ~ aridity + pet_mean, data = camels_train) %>%
-  # Log transform the predictor variables (aridity and p_mean)
-  
-  step_log(all_predictors()) %>%
-  
+rec <-recipe(logQmean ~. , data = camels_train) %>%
+  step_normalize(all_predictors()) %>%
+  # Log transform the predictor variables (aridity and pet_mean)
+  #step_log(all_predictors()) %>%
   # Add an interaction term between aridity and p_mean
-  step_interact(terms = ~ aridity:pet_mean) |> 
-  
+  step_interact(terms = ~ aridity:pet_mean) %>%
   # Drop any rows with missing values in the pred
-  step_naomit(all_predictors(), all_outcomes()) %>%
-  
-  #Don't use gauge_lat and gauge_lon in the recipe as predictors. You can use the step_rm() function to remove themwhile ensureing they persist in any data passed throuhg fit_*.
-  
-  update_role(gauge_lat, gauge_lon, new_role = "id")
+  #step_naomit(all_predictors(), all_outcomes()) %>%
+  step_rm(gauge_lat, gauge_lon) 
+
+
 
 #problem with step_rm: exclude these columns from being used as predictors, but still keep them in the dataset for later (e.g., to join, identify sites, or plot
 ```
@@ -108,7 +108,7 @@ rec <-  recipe(logQmean ~ aridity + pet_mean, data = camels_train) %>%
 
 # Resampling and Modeling Data: Training data is now ready to be used for model training and you have a preprocessor that you can iterate over.
 
-Build Resamples: This step is done above int he data splitting portion
+Build Resamples: This step is done above in the data splitting portion
 
 
 # Build 3 Candidate Models: A model is defined by a specification, an engine, and a mode. 
@@ -156,31 +156,31 @@ Based on the visualized metrics, select a model that you think best performs. De
 ```{r}
 rank_results(wf2, rank_metric = "rsq", select_best = TRUE)
 ```
-The linear regression model is best out of the three models that were run. This is because the PET_mean and aridity showed more of a linear relationship with the outcome variable of the log Qmean. It has a higher mean accuracy and a slightly lower standard deviation of error than the other models.
+The random forest model is the best out of the three models that were run. This is because even though PET_mean and aridity show a slight linear relationship with the outcome variable of the log Qmean, there are outliers and unpredictability that's best described with random forest. It has a higher mean accuracy and a slightly lower standard deviation of error than the other models.
 
-The engine for the linear regression model is linear, while the mode is regression. This type of model is good for this data set because it's small and easy to train and predict without the risk of over fitting. It also is a more linear relationship, that's better explained by this model than the other two.
+The engine for the random forest model is ranger, while the mode is regression. This type of model is good for this data set because it's small and easy to train and predict without the risk of over fitting. It also helps to learn about the interactions between other variables in the tree-building process.
 
 
 # Model Tuning
 
 Define a tunable model: Be sure to set the mode and engine as you did above but this time specify at least 2 hyperparameters to tune using the tune() function. These are set in the model specification and options can be found in the documentation for the model you are using.
 ```{r}
-#check tunable paramters for line reg
-?linear_reg
+#check tunable parameters for rand_forest
+?rand_forest
 
-#choosing glmnet:uses regularized least squares to fit models with numeric outcomes.
-# For this engine, there is a single mode: regression
+#mtry: Number of predictors randomly sampled at each split.
+#Type: Integer
+#Effect: Controls how diverse the trees are. Lower values increase diversity, but may reduce accuracy
 
-#This model has 2 tuning parameters:
-#penalty: Amount of Regularization (type: double, default: see below)
-#mixture: Proportion of Lasso Penalty (type: double, default: 1.0)
+#min_n: Minimum number of observations required to make a further split in a node.
+#Type: Integer
+#Effect: Controls how deep the trees can grow. Larger min_n means shallower trees, which helps avoid overfitting.
 
-#A value of mixture = 1 corresponds to a pure lasso model, while mixture = 0 indicates ridge regression.
-
-#The penalty parameter has no default and requires a single numeric value.
-
-lm_tunable <- linear_reg(penalty = tune(), mixture = tune()) %>%
-  set_engine("glmnet") %>%
+rf_tunable <- rand_forest(
+  mtry = tune(),
+  min_n = tune()
+) %>%
+  set_engine("ranger") %>%
   set_mode("regression")
 
 ```
@@ -191,7 +191,7 @@ lm_tunable <- linear_reg(penalty = tune(), mixture = tune()) %>%
 Now create a workflow object for this tune-able model and the recipe you created above.
 ```{r}
 # Create the workflow by combining the recipe and model
-lm_tuned_wf <- workflow(rec,lm_tunable)
+rf_wf <- workflow(rec,rf_tunable)
   
 ```
 
@@ -203,18 +203,14 @@ In the above step, you created a workflow based on a model that has at least 2 t
 Use the extract_parameter_set_dials(YOUR MODEL WORKFLOW) and save it to an object named dials. Check the dials$object slot to see the tunable parameters and their ranges.
 ```{r}
 # Extract tunable parameters from the workflow
-dials <- extract_parameter_set_dials(lm_tuned_wf)
+dials <- extract_parameter_set_dials(rf_wf)
 
 # View the parameter ranges
 dials$object
 
-#penalty: Regularization strength (lambda in glmnet); default range is on a log scale from 1e-10 to 1. A higher penalty forces coefficients toward zero (more shrinkage), which can help prevent overfitting. -10 → corresponds to a very small penalty (10^-10 = 1e-10), 0 → corresponds to a penalty of 1 (10^0 = 1).
+#Lower mtry increases randomness and tree diversity (good for generalization).Too low might make trees less accurate.
 
-#mixture: Elastic net mixing value (0 = ridge, 1 = lasso); linear scale from 0 to 1.
-
-#Tuning penalty helps you control overfitting. Tuning mixture helps you balance between:
-
-#Ridge: good when many small effects. Lasso: good when some variables are irrelevant (feature selection)
+#min_n : Higher min_n → simpler trees, less overfitting. Too high → underfitting (model too simple).
 
 ```
 
@@ -231,14 +227,226 @@ For this lab, lets use a grid search based on a “Latin Hypercube” SFD method
 
 Create a SFD Grid Object with 25 predefined combinations.
 ```{r}
-# Create a Latin Hypercube grid with 25 combinations
-my.grid <- lm_tuned_wf %>%
-  extract_parameter_set_dials %>%
-  grid_latin_hypercube(size=25)
 
-#size = 25 tells it to generate 25 unique combinations of penalty and mixture.
+#because undefinable max range of mtry, need to finalize dial before pass it into grid
+
+# 2. Finalize parameter set based on training data (camels_train)
+dials_final <- finalize(dials, camels_train)
+
+# 3. Now you can create the grid with 25 combinations
+my.grid <- grid_latin_hypercube(
+  dials_final,
+  size = 25)
 
 #grid_latin_hypercube() samples evenly across the search space, but in a way that covers more ground than a regular grid with fewer points.
 ```
 
+
+# Tune the Model
+
+OK! You now have a tunable model workflow (rf_wf), a set of k-fold resamples to test over (folds), and a grid of hyperparameters to search (grid). Now we can use the tune_grid() function to search the grid and evaluate the model performance using the code below. In this example, we are doing 2 additional things. Setting a set of metrics to compute and saving the predictions to a output tibble.
+
+Run the below code making any changes your need based on how you named your objects.
+```{r}
+model_params <- tune_grid(
+  rf_wf,                 # your random forest workflow
+  resamples = camels_cv, # your cross-validation folds
+  grid = my.grid,        # the grid you built using Latin Hypercube
+  metrics = metric_set(rmse, rsq, mae),
+  control = control_grid(save_pred = TRUE)
+)
+
+autoplot(model_params)
+
+#Tests 25 random forest models (from my.grid).Across all resamples in camels_cv. Evaluates 3 metrics: RMSE, R², and MAE. Saves predictions from each resample so you can inspect them later
+```
+
+There is a randomly predicted side and minimal node side that show the metrics. It looks to be a scatter plot with clusters of points that show a trend with the rmse, rsq, and mae.
+
+
+# Check the skill of the tuned model
+
+Now that you have tuned the model under many combinations of hyperparameters, you can check the skill using the collect_metrics() function. This will return a tibble with the metrics for each combination of hyperparameters.
+
+Use the collect_metrics() function to check the skill of the tuned model. Describe what you see, remember dplyr functions like arrange, slice_*, and filter will work on this tibble.
+```{r}
+ #Collect the performance metrics from the tuning results
+metrics_summary <- collect_metrics(model_params)
+
+# which combination gave the lowest RMSE:
+metrics_summary %>%
+  filter(.metric == "rmse") %>%
+  arrange(mean) %>%
+  slice_head(n = 5)
+
+# which combination gave the highest R²:
+metrics_summary %>%
+  filter(.metric == "rsq") %>%
+  arrange(desc(mean)) %>%
+  slice_head(n = 5)
+
+```
+
+A lot of different numbers that describe the mtry. min_n, metric, estimator, mean, n, and std_err. The lowest mean of .54587 has a mtry of 2 and min_n of 18.
+
+You can also use the show_best() function to show the best performing model based on a metric of your choice. For example, if you want to see the best performing model based on the RMSE metric, you can use the following code: Use the show_best() function to show the best performing model based on Mean Absolute Error.
+
+Please interpret the results of the first row of show_best(). What do you see? What hyperparameter set is best for this model, based on MAE?
+
+```{r}
+show_best(model_params, metric = "mae")
+
+#mtry refers to the number of variables (predictors) randomly sampled at each split in a random forest model. It controls the randomness of the model by limiting the number of features used to make decisions at each node of the tree.
+
+#The best model uses a value of 20 for min_n, meaning each leaf node in the decision trees must have at least 20 data points before it can be created.
+
+# The standard error (0.016) indicates how much variability there is in the model's MAE across the 10 folds. A smaller standard error suggests more stability in the model's performance.
+
+```
+The lowest avg. mean is .3318 with a std_err of 0.0160, mtry of 3 and min_n of 20. The model's performance is stable and consistent across different folds.
+
+
+A short cut for show_best(..., n = 1) is to use select_best(). This will return the best performing hyperparameter set based on the metric you choose. Use the select_best() function to save the best performing hyperparameter set to an object called hp_best. Please interpret the results of the first row of show_best(). What do you see? What hyperparameter set is best for this model, based on MAE?
+```{r}
+hp_best <- select_best(model_params, metric = "mae")
+hp_best
+```
+
+The best hyper parameters for this set is to have 3 predictable variables and at least 20 data points.
+
+
+# Finalize your model
+
+Fantastic, you now have a workflow and a idealized set of hyperparameters to use for your model. Now we can inject the hyperparameters into the workflow using the finalize_workflow() function. This will create a new workflow object that is no longer dependent on tune() attributes, but rather the finalized hyperparameters. This is a new workflow object that is ready to be used for final model fitting.
+
+Run finalize_workflow() based on your workflow and best hyperparmater set to create a final workflow object:
+```{r}
+# Finalize the workflow with the best hyperparameter set
+final_wf <- finalize_workflow(rf_wf, hp_best)
+
+```
+
+
+# Final Model Verification
+
+The show_best(), select_best(), and collect_metrics() functions are all great, but they are only implemented on the resampled iterations of the training data. Remember, applications over just the training data can often be misleading. We need to check the final model on the test data to see how it performs.
+
+Here, we can leverage a short cut in tidymodels to fit the final model to the test data. This is done using the last_fit() function. The last_fit() function will take the finalized workflow, and the full split data object (containing both the training and testing data) and fit it to the training data and validate it on the testing data. 
+
+Use last_fit() to fit the finalized workflow the original split object (output of initial_split()). This will fit the model to the training data and validate it on the testing data.
+```{r}
+last_fit_results <- last_fit(final_wf, split = camels_split)
+```
+
+
+With the final model fit, we can now check the performance of the model on the test data in our two standard ways!
+
+Use the collect_metrics() function to check the performance of the final model on the test data. This will return a tibble with the metrics for the final model. Interpret these results. How does the final model perform on the test data? Is it better or worse than the training data? Use your knowledge of the regression based metrics to describe the results.
+```{r}
+# Collect metrics for the final model on the test data
+final_model_metrics <- collect_metrics(last_fit_results)
+
+#show results
+final_model_metrics
+
+```
+The rmse predictions of this model are off by 0.588 units, which is higher than the training data metrics which were .54587. The rsq predictions are 72.8%, and the training data shows 78.48%. This means that the prediction is slightly overfit and the model was uable to explain more variance in the training than the testing data. The random forest model has decent predictive performance.
+
+Use the collect_predictions() function to check the predictions of the final model on the test data. This will return a tibble with the predictions for the final model.
+```{r}
+# Fit the final model and collect predictions using last_fit
+final_fit <- last_fit(final_wf, split = camels_split)
+
+# Use collect_predictions() to get the predictions
+final_predictions <- collect_predictions(final_fit)
+
+# View the first few rows of predictions
+head(predictions)
+
+```
+
+
+Use the output of this to create a scatter plot of the predicted values vs the actual values. Use the ggplot2 package to create the plot. This plot should include (1) geom_smooth(method = “lm”) to add the linear fit of predictions and truth (2) geom_abline() to add a 1:1 line (3) nice colors via scale_color_* and (4) accurate labels.
+```{r}
+# Create the scatter plot with a color gradient
+ggplot(final_predictions, aes(x = logQmean, y = .pred)) +
+  # (1) Linear trend line of predictions vs actuals
+  geom_smooth(method = "lm", se = FALSE, color = "blue", linetype = "dashed") +
+  
+  # (2) 1:1 reference line (perfect prediction)
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "solid") +
+  
+  # (3) Points with green color scale
+  geom_point(aes(color = .pred), size = 2, alpha = 0.5) +
+  scale_color_gradient(low = "yellowgreen", high = "darkgreen") +
+  
+  # (4) Labels and theme
+  labs(
+    title = "Predicted vs Actual logQmean",
+    x = "Actual logQmean",
+    y = "Predicted logQmean",
+    color = "Predicted"
+  ) +
+  theme_minimal()
+
+#linear fit line (blue dashed line) will show the trend of predictions vs. actual values.
+
+#The 1:1 line (red solid line) will show where predicted values equal actual values.
+```
+
+
+# Building a Map!
+
+As a last step, you want to map your predictions across CONUS. Return to the ggplot examples in Lab 6 to refresh your memory on building a map with a defined color pallete.
+
+To build your final prediction, you can use fit() to fit the finalized workflow to the full, cleaned data (prior to splitting). This will return a fitted model object that can be used to make predictions on new data.
+
+This full fit can be passed to the augment() function to make predictions on the full, cleaned data. This will return a tibble with the predictions for the full data. Use the mutate() function to calculate the residuals of the predictions. The residuals are the difference between the predicted values and the actual values squared.
+```{r}
+
+# Fit the final model to the entire dataset
+final_fit <- fit(final_wf, data = camels_clean)
+
+# Get predictions for the full dataset
+full_predictions <- augment(final_fit, new_data = camels_clean)
+
+#Calculate residuals
+full_predictions <- full_predictions %>%
+  mutate(residual = (logQmean - .pred)^2)
+
+#Use ggplot2 to create a map of the predictions.
+us_map <- map_data("state")
+
+predic_plot<-ggplot(full_predictions, aes(x = gauge_lon, y = gauge_lat)) +
+  geom_point(aes(color = .pred), size = 3, alpha = 0.8) +
+  scale_color_viridis_c(option = "C") +  # You can switch palettes here
+  coord_fixed(1.3) +  # keep geographic aspect ratio
+  labs(
+    title = "Predicted logQmean Across CONUS",
+    x = "Longitude",
+    y = "Latitude",
+    color = "Prediction"
+  ) +
+  theme_minimal()
+
+#use ggplot to creat map of residuals
+
+residuals_plot<-  ggplot(full_predictions, aes(x = gauge_lon, y = gauge_lat)) +
+  geom_point(aes(color = residual), size = 3, alpha = 0.8) +
+  scale_color_viridis_c(option = "magma") +
+  coord_fixed(1.3) +
+  labs(
+    title = "Residuals (Squared Error)",
+    x = "Longitude",
+    y = "Latitude",
+    color = "Residual"
+  ) +
+  theme_minimal()
+  
+
+# Combine the two maps into a single image using patchwork
+combined_plot <- predic_plot | residuals_plot 
+
+combined_plot
+```
 
